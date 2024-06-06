@@ -5,7 +5,7 @@ import Mathlib.Data.Nat.Defs
 
 inductive Ty : Type where 
 | TNat : Ty 
-| TBool : Ty 
+| TBool : Ty
 | TUnit : Ty 
 | TPair : Ty → Ty → Ty 
 | TSum : Ty → Ty → Ty 

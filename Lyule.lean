@@ -1,5 +1,3 @@
 -- This module serves as the root of the `Lyule` library.
 -- Import modules here that should be built as part of the library.
-import «Lyule».Basic
-import «Lyule».Syntax 
-import «Lyule».Semantics
+import «Lyule».Intrinsically

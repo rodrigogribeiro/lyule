@@ -1,152 +1,177 @@
-import Mathlib.Data.Finmap 
 import Mathlib.Data.Nat.Defs
-
+import Lyule.Utils
 import Lyule.Syntax
+
+open Ty 
+
+-- interpreting types 
+
+def Ty.asType : Ty → Type 
+| TNat => ℕ 
+| TBool => Bool 
+| TUnit => Unit 
+| TPair t1 t2 => t1.asType × t2.asType
+| TSum t1 t2 => t1.asType ⊕ t2.asType 
 
 -- definition of values 
 
-inductive Val : Type where
-| VNat : ℕ → Val
-| VBool : Bool → Val 
-| VUnit : Val 
-| VPair : Val → Val → Val 
-| VInl : Val → Val 
-| VInr : Val → Val 
-deriving Repr
+inductive Val : Ty → Type where 
+| VNat : ℕ → Val TNat
+| VBool : Bool → Val TBool 
+| VUnit : Val TUnit 
+| VInl : ∀ {t}(t' : Ty), 
+              Val t → 
+              Val (TSum t t')
+| VInr : ∀ {t'}(t : Ty), 
+               Val t' → 
+               Val (TSum t t')
+| VPair : ∀ {t t'}, 
+               Val t → 
+               Val t' → 
+               Val (TPair t t')
+deriving Repr 
 
-open Val Ty 
+def vfst {t t'} : Val (TPair t t') → Val t 
+| Val.VPair v1 _ => v1 
 
-def Ty.defaultVal : Ty → Val 
-| TNat => VNat 0 
-| TBool => VBool false 
-| TUnit => VUnit 
-| TPair t1 t2 => VPair t1.defaultVal t2.defaultVal
-| TSum t1 _ => VInl t1.defaultVal 
-| TFun _ tr => tr.defaultVal
+def vsnd {t t'} : Val (TPair t t') → Val t'
+| Val.VPair _ v2 => v2
 
-abbrev VarEnv := Finmap (λ _ : Name => Val)
-abbrev FunEnv := Finmap (λ _ : Name => Function)
+--definition of value environment 
 
-inductive Status where 
-| Ok : Status
-| OutOfGas : Status
-| VarNotFound : Name → Status
-| UndefinedFunction : Name → Status
-| InvalidOperation : Status  
-| UnknownError : Status
+abbrev Env ctx := All Val ctx 
 
-structure State (A : Type) where 
-  result : A 
-  varenv : VarEnv 
-  funenv : FunEnv 
-  status : Status 
+def lookupVar {ctx t} : Idx t ctx → Env ctx → Val t
+| idx, env => lookupAll env idx
 
-open Expr State Status Stmt  
+-- definitional interpreter 
 
-def State.setResult {A : Type}(s : State A)(v : A) : State A := 
-  match s.status with 
-  | .Ok => State.mk v s.varenv s.funenv .Ok
-  | _   => s
+abbrev Fuel := ℕ 
 
-def State.setStatus {A : Type}(s : State A)(s' : Status) : State A := 
-  match s.status with 
-  | .Ok => State.mk s.result s.varenv s.funenv s'
-  | _ => s 
+mutual
+  
+  def evalExp {ctx fctx t}
+      : Fuel → Expr fctx ctx t → 
+               Functions fctx → 
+               Env ctx → Option (Val t) 
+  | 0, _ , _, _ => .none 
+  | _, Expr.ENat n, _, _ => pure (Val.VNat n)
+  | _, Expr.EBool b, _, _ => pure (Val.VBool b)
+  | _, Expr.EUnit, _, _ => pure Val.VUnit 
+  | _, Expr.EVar v, _, env => lookupVar v env
+  | fuel' + 1, Expr.EInl t e, fenv, env => 
+    do
+      let v1 ← evalExp fuel' e fenv env 
+      pure (Val.VInl t v1)
+  | fuel' + 1, Expr.EInr t e, fenv, env => 
+    do
+      let v1 ← evalExp fuel' e fenv env 
+      pure (Val.VInr t v1)
+  | fuel' + 1, Expr.EPair e1 e2, fenv, env => 
+    do 
+      let v1 ← evalExp fuel' e1 fenv env 
+      let v2 ← evalExp fuel' e2 fenv env 
+      pure (Val.VPair v1 v2)
+  | fuel' + 1, Expr.EFst e, fenv, env => 
+    do 
+      let v1 ← evalExp fuel' e fenv env 
+      pure (vfst v1)
+  | fuel' + 1, Expr.ESnd e, fenv, env => 
+    do 
+      let v1 ← evalExp fuel' e fenv env 
+      pure (vsnd v1)
+  | fuel' + 1, Expr.ECall idx args, fenv, env => 
+    do 
+      let vals ← evalArgs fuel' args fenv env
+      evalCall fuel' (lookupAll fenv idx) fenv vals  
+  termination_by fuel' => fuel'
 
-def State.first (s : State Val) : State Val := 
-  match s.result with 
-  | VPair v1 _ => s.setResult v1
-  | _ => s.setStatus InvalidOperation
+  def evalCall {fctx s} : Fuel → 
+                          Func fctx s → 
+                          Functions fctx → 
+                          Env s.params → 
+                          Option (Val s.ret)
+  | 0, _, _, _ => .none 
+  | fuel' + 1, Func.MkFunc s bd e, fenv, env => 
+    do 
+      let env1 ← evalBlock fuel' bd fenv env 
+      let env' ← evalExp fuel' e fenv env1 
+      pure env'
+  termination_by fuel' => fuel'
 
-def State.second (s : State Val) : State Val := 
-  match s.result with 
-  | VPair _ v2 => s.setResult v2
-  | _ => s.setStatus InvalidOperation
+  def evalArgs {fctx ctx ps} : Fuel → 
+                               Args fctx ctx ps → 
+                               Functions fctx → 
+                               Env ctx → 
+                               Option (Env ps)
+  | 0, _, _, _ => .none 
+  | _fuel' + 1, Args.Nil, _ , _ => pure All.Nil
+  | fuel' + 1, Args.Cons arg args, fenv, env => 
+    do 
+      let v ← evalExp fuel' arg fenv env 
+      let vs ← evalArgs fuel' args fenv env 
+      pure (All.Cons v vs)
+  termination_by fuel' => fuel'
 
-def State.insert (s : State Val)(n : Name)(v : Val) : State Val := 
-  State.mk s.result (s.varenv.insert n v) s.funenv s.status
 
-def State.remove (s : State Val)(n : Name) : State Val :=
-  State.mk s.result (s.varenv.erase n) s.funenv s.status 
+  def evalStmt {fctx ctx ctx'} : Fuel → 
+                                 Stmt fctx ctx ctx' → 
+                                 Functions fctx → 
+                                 Env ctx → 
+                                 Option (Env ctx') 
+  | 0, _, _, _ => .none
+  | fuel' + 1, Stmt.SDecl e , fenv, env => 
+    do 
+      let v1 ← evalExp fuel' e fenv env 
+      pure (All.Cons v1 env)
+  | fuel' + 1, Stmt.SAssign idx e, fenv, env => 
+    do 
+      let v1 ← evalExp fuel' e fenv env 
+      pure (updateAll env idx v1)
+  | fuel' + 1, Stmt.SExpr e, fenv, env => 
+      do 
+        let _v1 ← evalExp fuel' e fenv env 
+        pure env
+  | fuel' + 1, Stmt.SCase e bl br, fenv, env => 
+    do 
+      let v ← evalExp fuel' e fenv env
+      let env' ← evalCase fuel' v bl br fenv env
+      pure env'
+  termination_by fuel' => fuel' 
 
-def insertMany : List (Name × Val) → State Val → State Val 
-| defs , s => defs.foldr (λ p ac => ac.insert p.1 p.2) s
+  def evalCase {fctx ctx ctx' t t'} : Fuel → 
+                                      Val (TSum t t') → 
+                                      Block fctx (t :: ctx) ctx' → 
+                                      Block fctx (t' :: ctx) ctx' → 
+                                      Functions fctx → 
+                                      Env ctx → 
+                                      Option (Env ctx')
+  | 0, _ ,_ ,_ , _, _ => .none 
+  | fuel' + 1, Val.VInl _ v, bl, _, fenv, env => 
+     evalBlock fuel' bl fenv (All.Cons v env)
+  | fuel' + 1, Val.VInr _ v, _, br, fenv, env =>
+    evalBlock fuel' br fenv (All.Cons v env)
+  termination_by fuel' => fuel' 
 
-def removeMany : List Name → State Val → State Val 
-| defs , s => defs.foldr (λ n ac => ac.remove n) s 
-
-mutual 
-
-  def evalVar (v : Name)(s : State Val) : State Val := 
-    match Finmap.lookup v s.varenv with 
-    | .some val => s.setResult val
-    | .none => s.setStatus (.VarNotFound v)
-
-  def evalCall (fuel : ℕ)(f : Name)
-               (args : List Expr)(s : State Val) : State Val := 
-    match fuel with 
-    | 0 => s.setStatus .OutOfGas
-    | fuel' + 1 => 
-      match Finmap.lookup f s.funenv with 
-      | .some fd => 
-        let vals := args.map (λ e => (evalExp fuel' e s).result)
-        let argNames := fd.parameters.map (λ (n, _) => n)
-        let newEnv := argNames.zip vals 
-        let s1 := evalBlock fuel' fd.body (insertMany newEnv s) 
-        removeMany argNames s1
-      | .none => s.setStatus (.UndefinedFunction f)
-    
-  def evalExp (fuel : ℕ)(e : Expr)(s : State Val) : State Val := 
-    match fuel with 
-    | 0 => s.setStatus .OutOfGas 
-    | fuel' + 1 => 
-       match e with 
-       | ENat n => s.setResult (VNat n)  
-       | EBool b => s.setResult (VBool b)
-       | EUnit => s.setResult VUnit
-       | EVar v => evalVar v s 
-       | EPair e1 e2 => 
-          let s1 := evalExp fuel' e1 s
-          let s2 := evalExp fuel' e2 s1 
-          s2.setResult (VPair s1.result s2.result)
-       | EFst e1 => 
-          let s1 := evalExp fuel' e1 s
-          s1.first 
-       | ESnd e1 => 
-          let s1 := evalExp fuel' e1 s
-          s1.second
-       | EInl e1 =>
-          let s1 := evalExp fuel' e1 s 
-          s1.setResult (VInl s1.result)
-       | EInr e1 => 
-          let s1 := evalExp fuel' e1 s 
-          s1.setResult (VInr s1.result)
-       | ECall n es => evalCall fuel' n es s
-
-  def evalBlock (fuel : ℕ)(blk : List Stmt)(s : State Val) : State Val :=
-    match fuel with 
-    | 0 => s.setStatus .OutOfGas
-    | fuel' + 1 => 
-      match blk with 
-      | [] => s 
-      | (s1 :: ss') => 
-        evalBlock fuel' ss' (evalStmt fuel' s1 s)
-
-  def evalStmt (fuel : ℕ)(e : Stmt)(s : State Val) : State Val := 
-    match fuel with 
-    | 0 => s.setStatus .OutOfGas
-    | fuel' + 1 => 
-      match e with 
-      | SAssign n e1 => 
-        let s1 := evalExp fuel' e1 s 
-        s1.insert n s1.result 
-      | SAlloc n t => 
-        s.insert n t.defaultVal
-      | SExpr e => 
-        evalExp fuel' e s 
-      | SReturn e => 
-        let s1 := evalExp fuel' e s 
-        s1 -- fix status here 
-      | SBlock blk => evalBlock fuel' blk s 
-      | SCase e _eqns => evalExp fuel' e s 
+  def evalBlock {fctx ctx ctx'} : Fuel → 
+                                  Block fctx ctx ctx' → 
+                                  Functions fctx → 
+                                  Env ctx → 
+                                  Option (Env ctx') 
+  | 0, _, _, _ => .none 
+  | _fuel' + 1, Block.Done , _, env => pure env
+  | fuel' + 1, Block.Next s blk, fenv, env => 
+    do 
+      let env1 ← evalStmt fuel' s fenv env 
+      evalBlock fuel' blk fenv env1
+  termination_by fuel' => fuel'
 end 
+
+-- full program evaluation
+
+def evalProg : Fuel → Program → Option (Σ ctx : Ctx , Env ctx)
+| 0, _ => .none 
+| fuel' + 1, (Program.MkProg fs blk) => 
+  do 
+    let env1 ← evalBlock fuel' blk fs All.Nil 
+    pure (Sigma.mk _ env1)

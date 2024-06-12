@@ -39,7 +39,9 @@ def vsnd {t t'} : Val (TPair t t') → Val t'
 
 --definition of value environment 
 
-abbrev Env ctx := All Val ctx 
+abbrev Env ctx := All Val ctx
+
+-- All P xs ↔ ∀ {x}, x ∈ xs → P x
 
 def lookupVar {ctx t} : Idx t ctx → Env ctx → Val t
 | idx, env => lookupAll env idx
@@ -53,12 +55,12 @@ mutual
   def evalExp {ctx fctx t}
       : Fuel → Expr fctx ctx t → 
                Functions fctx → 
-               Env ctx → Option (Val t) 
-  | 0, _ , _, _ => .none 
+               Env ctx → Result (Val t) 
+  | 0, _ , _, _ => .Timeout 
   | _, Expr.ENat n, _, _ => pure (Val.VNat n)
   | _, Expr.EBool b, _, _ => pure (Val.VBool b)
   | _, Expr.EUnit, _, _ => pure Val.VUnit 
-  | _, Expr.EVar v, _, env => lookupVar v env
+  | _, Expr.EVar v, _, env => pure (lookupVar v env)
   | fuel' + 1, Expr.EInl t e, fenv, env => 
     do
       let v1 ← evalExp fuel' e fenv env 
@@ -90,8 +92,8 @@ mutual
                           Func fctx s → 
                           Functions fctx → 
                           Env s.params → 
-                          Option (Val s.ret)
-  | 0, _, _, _ => .none 
+                          Result (Val s.ret)
+  | 0, _, _, _ => .Timeout 
   | fuel' + 1, Func.MkFunc s bd e, fenv, env => 
     do 
       let env1 ← evalBlock fuel' bd fenv env 
@@ -103,8 +105,8 @@ mutual
                                Args fctx ctx ps → 
                                Functions fctx → 
                                Env ctx → 
-                               Option (Env ps)
-  | 0, _, _, _ => .none 
+                               Result (Env ps)
+  | 0, _, _, _ => .Timeout 
   | _fuel' + 1, Args.Nil, _ , _ => pure All.Nil
   | fuel' + 1, Args.Cons arg args, fenv, env => 
     do 
@@ -118,8 +120,8 @@ mutual
                                  Stmt fctx ctx ctx' → 
                                  Functions fctx → 
                                  Env ctx → 
-                                 Option (Env ctx') 
-  | 0, _, _, _ => .none
+                                 Result (Env ctx') 
+  | 0, _, _, _ => .Timeout
   | fuel' + 1, Stmt.SDecl e , fenv, env => 
     do 
       let v1 ← evalExp fuel' e fenv env 
@@ -145,8 +147,8 @@ mutual
                                       Block fctx (t' :: ctx) ctx' → 
                                       Functions fctx → 
                                       Env ctx → 
-                                      Option (Env ctx')
-  | 0, _ ,_ ,_ , _, _ => .none 
+                                      Result (Env ctx')
+  | 0, _ ,_ ,_ , _, _ => .Timeout 
   | fuel' + 1, Val.VInl _ v, bl, _, fenv, env => 
      evalBlock fuel' bl fenv (All.Cons v env)
   | fuel' + 1, Val.VInr _ v, _, br, fenv, env =>
@@ -157,8 +159,8 @@ mutual
                                   Block fctx ctx ctx' → 
                                   Functions fctx → 
                                   Env ctx → 
-                                  Option (Env ctx') 
-  | 0, _, _, _ => .none 
+                                  Result (Env ctx') 
+  | 0, _, _, _ => .Timeout 
   | _fuel' + 1, Block.Done , _, env => pure env
   | fuel' + 1, Block.Next s blk, fenv, env => 
     do 
@@ -169,8 +171,8 @@ end
 
 -- full program evaluation
 
-def evalProg : Fuel → Program → Option (Σ ctx : Ctx , Env ctx)
-| 0, _ => .none 
+def evalProg : Fuel → Program → Result (Σ ctx : Ctx , Env ctx)
+| 0, _ => .Timeout 
 | fuel' + 1, (Program.MkProg fs blk) => 
   do 
     let env1 ← evalBlock fuel' blk fs All.Nil 

@@ -27,4 +27,24 @@ def updateAll {A : Type}
 | All.Cons px pxs, Idx.There idx, px' => 
   All.Cons px (updateAll pxs idx px') 
 
+-- Monad for representing the result of the interpreter 
+
+inductive Result (A : Type) : Type where 
+| Ok : A → Result A 
+| Timeout : Result A 
+| TypeError : Result A 
+
+instance : Pure Result where 
+  pure := .Ok 
+
+def Result.bind {A B : Type}
+                (ma : Result A)
+                (f : A → Result B) : Result B := 
+  match ma with 
+  | .Ok v => f v 
+  | .Timeout => .Timeout 
+  | .TypeError => .TypeError
+
+instance : Bind Result where 
+  bind := Result.bind
 

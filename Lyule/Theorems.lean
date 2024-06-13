@@ -39,11 +39,13 @@ lemma evalLemma
         exists p.1
         exists p.2
 
--- type soundness lemma 
+-- type soundness lemma: again, this is a mere formality. 
+-- this result is ensured by construction by evalProg definition.
 
 theorem soundness 
-  : ∀ n prog p, evalProg n prog = p → (∃ (ctx : Ctx)(env : Env ctx), p = .Ok (Sigma.mk ctx env)) ∨ 
-                                      p = .Timeout := by 
+  : ∀ n prog p, evalProg n prog = p → 
+    (∃ (ctx : Ctx)(env : Env ctx), p = .Ok (Sigma.mk ctx env)) ∨ 
+                                   p = .Timeout := by 
       intros n prog p H 
       rcases p with ⟨ ctx , env ⟩ | _ 
       · 

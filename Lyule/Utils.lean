@@ -32,7 +32,6 @@ def updateAll {A : Type}
 inductive Result (A : Type) : Type where 
 | Ok : A → Result A 
 | Timeout : Result A 
-| TypeError : Result A 
 
 instance : Pure Result where 
   pure := .Ok 
@@ -43,7 +42,6 @@ def Result.bind {A B : Type}
   match ma with 
   | .Ok v => f v 
   | .Timeout => .Timeout 
-  | .TypeError => .TypeError
 
 instance : Bind Result where 
   bind := Result.bind

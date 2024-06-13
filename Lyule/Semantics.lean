@@ -172,8 +172,7 @@ end
 -- full program evaluation
 
 def evalProg : Fuel → Program → Result (Σ ctx : Ctx , Env ctx)
-| 0, _ => .Timeout 
-| fuel' + 1, (Program.MkProg fs blk) => 
+| fuel, (Program.MkProg fs blk) => 
   do 
-    let env1 ← evalBlock fuel' blk fs All.Nil 
+    let env1 ← evalBlock fuel blk fs All.Nil 
     pure (Sigma.mk _ env1)

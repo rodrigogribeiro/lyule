@@ -12,6 +12,11 @@ section DEBRUIJN
   | There : ∀ {y ys}, Idx x ys → Idx x (y :: ys)
   deriving Repr 
 
+  inductive OPE : List A → List A → Type where 
+  | Done : OPE [] []
+  | Keep : ∀ x xs ys, OPE xs ys → OPE (x :: xs) (x :: ys)
+  | Skip : ∀ x xs ys, OPE xs ys → OPE (x :: xs) ys 
+  deriving Repr 
 end DEBRUIJN
 
 -- type syntax 
@@ -101,7 +106,8 @@ mutual
               Expr fctx ctx (TSum t t') → 
               Block fctx (t :: ctx) ctx' → 
               Block fctx (t' :: ctx) ctx' → 
-              Stmt fctx ctx ctx'
+              OPE ctx' ctx → 
+              Stmt fctx ctx ctx
   deriving Repr 
 
   -- functions 
@@ -110,7 +116,7 @@ mutual
   | Done : ∀ {ctx}, Block fctx ctx ctx 
   | Next : ∀ {ctx ctx1 ctx'}, 
                 Stmt fctx ctx ctx1 → 
-                Block fctx ctx1 ctx' → 
+                Block fctx ctx1 ctx' →  
                 Block fctx ctx ctx'
   deriving Repr
 
@@ -175,6 +181,11 @@ abbrev Env ctx := All Val ctx
 
 def lookupVar {ctx t} : Idx t ctx → Env ctx → Val t
 | idx, env => lookupAll env idx
+
+def weak {ctx ctx'} : OPE ctx' ctx → Env ctx' → Env ctx 
+| OPE.Done, All.Nil => All.Nil 
+| OPE.Keep _x _xs _ys q, All.Cons px p => All.Cons px (weak q p)
+| OPE.Skip _x _xs ys q, All.Cons _ p => weak q p
 
 -- definitional interpreter 
 
@@ -264,11 +275,11 @@ mutual
       do 
         let _v1 ← evalExp fuel' e fenv env 
         pure env
-  | fuel' + 1, Stmt.SCase e bl br, fenv, env => 
+  | fuel' + 1, Stmt.SCase e bl br op, fenv, env => 
     do 
       let v ← evalExp fuel' e fenv env
       let env' ← evalCase fuel' v bl br fenv env
-      pure env'
+      pure (weak op env')
   termination_by fuel' => fuel' 
 
   def evalCase {fctx ctx ctx' t t'} : Fuel → 
